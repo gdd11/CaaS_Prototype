@@ -1,0 +1,48 @@
+trigger:
+  branches:
+    include:
+      - main
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  # Set this in your Pipeline UI or replace here directly:
+  ACR_NAME: gdd11clregistry
+  WEBAPP_NAME: <YOUR_WEBAPP_NAME>
+  AZURE_SUBSCRIPTION: <YOUR_SERVICE_CONNECTION>
+
+steps:
+  # 1. Python 3.12
+  - task: UsePythonVersion@0
+    inputs:
+      versionSpec: '3.12'
+
+  # 2. Infra validation (skip service-checks)
+  - script: |
+      python -m venv .venv
+      source .venv/bin/activate
+      pip install gitpython pydantic pydantic-settings redis httpx setuptools
+      python Dev/idvc-project/infra_validation.py --skip-service-checks
+    displayName: 'Validate Infrastructure'
+
+  # 3. Install & run tests
+  - script: |
+      source .venv/bin/activate
+      pip install -r Dev/idvc-project/requirements.txt pytest
+      pytest -q Dev/idvc-project/tests
+    displayName: 'Install & Test Connector'
+
+  # 4. Build & push Docker image
+  - script: |
+      docker build -t $(ACR_NAME).azurecr.io/idvc:$(Build.BuildId) Dev/idvc-project
+      docker push $(ACR_NAME).azurecr.io/idvc:$(Build.BuildId)
+    displayName: 'Build & Push Docker Image'
+
+  # 5. (Optional) Deploy to Azure Web App for Containers
+  - task: AzureWebAppContainer@2
+    inputs:
+      azureSubscription: '$(AZURE_SUBSCRIPTION)'
+      appName: '$(WEBAPP_NAME)'
+      containers: '$(ACR_NAME).azurecr.io/idvc:$(Build.BuildId)'
+    displayName: 'Deploy to Azure Web App'
